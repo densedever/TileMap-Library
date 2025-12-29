@@ -1,5 +1,5 @@
 """
-Class for Tile map for 2D isometric RPG games.
+Class for drawing Tile maps for 2D isometric RPG games.
 
 Helpful urls while making:
 https://clintbellanger.net/articles/isometric_math/
@@ -10,7 +10,7 @@ https://web.archive.org/web/20190818212535/http://trac.bookofhook.com/bookofhook
 TODO: . = undone, v = done but needs testing
 . save selected tile location if mouse goes outside world bounds
 v make a generalized way to select arbitrary tile
-. make the center of the viewport
+v make the center of the viewport
 . make the player character tile
 . center it on the viewport
 """
@@ -93,6 +93,10 @@ class TileMap:
         self.tile_size = Vec2d(64, 32)
         #self.sprite_atlas = None
         #self.camera = None
+        self.moving = False
+        self.animation_frames_remaining = 0 # frames left in current movement animation.
+        self.animation_target_offset = Vec2d(0, 0) # total offset to move during this animation.
+        self.animation_increment = Vec2d(0, 0) # offset per frame.
         if self.map_loaded == False:
             self.generate_terrain_layer() # needed here?
 
@@ -110,10 +114,8 @@ class TileMap:
         """ returns the pixel coordinates of the center of the tile at position. 
         tile centers are weird in this codebase because the center of one tile
         is the corner of another tile. so if you're drawing or selecting tiles, which one 
-        are you drawing? the tile at that position, or the tile whose corner is at that position?
-        idk how to fix this yet. 
-        maybe by making those two as separate data members inside the Tile class and
-        then doing stuff using those? """
+        are you drawing? the tile underneath that position, or the tile whose corner is at 
+        that position? idk how to fix this yet. """
         tile = self.pixelxy_to_tilexy(position)
         return Vec2d(
             tile.x + self.tile_size.x_half,
@@ -140,10 +142,10 @@ class TileMap:
             (cell.y - origin.y) + (cell.x - origin.x),
             (cell.y - origin.y) - (cell.x - origin.x) """
         
-        # color of one of the four corners of the picture res\isotile-colored-corners.png,
-        # used to shift our regard onto tiles around each cell,
-        # instead of an up/down grid of rectangles that doesn't cover each tile drawn.
-        # (am i using "tile" and "cell" inconsistently in this codebase? pls check)
+        """ color of one of the four corners of the picture res\isotile-colored-corners.png,
+        used to shift our regard onto tiles around each cell,
+        instead of an up/down grid of rectangles that doesn't cover each tile drawn.
+        (am i using "tile" and "cell" inconsistently in this codebase? pls check) """
         color_at_offset = self.terrain_sprites["corners"].get_at((int(offsetx), int(offsety)))
         color = color_at_offset[:3]
         if color == (255, 0, 0): selected.y += 1
@@ -158,7 +160,7 @@ class TileMap:
         used for when something happens around the player and we need to 
         know which tile relative to the player we're working with.
         world coord -> pixel coord """
-        # find a tile at specific world coords
+        # find a tile at specific world coords.
         tile = self.map_terrain_layer[world_coord.x][world_coord.y]
         
         # print(f"({tile.world_coordinate.x}, {tile.world_coordinate.y}) -> [{tile.x}, {tile.y}]")
@@ -191,11 +193,9 @@ class TileMap:
         self.viewport_size accounts for there being a HUD,
         and draws at the center of the viewport minus one tile height and half width. 
         
-        is this the best general behavior? what if I want a cinematic at some point?
-        maybe have an optional parameter for offsetting from center? """
-        # might need cell and selected in here too. that might be the issue.
-        """
-        since pixelxy_to_tilexy returns a cell, we need to subtract
+        might need cell and selected in here too. that might be the issue. """
+        
+        """ since pixelxy_to_tilexy returns a cell, we need to subtract
         half the width/height to return the correct cell.
         we need to subtract instead of add because pixelxy_to_tilexy
         returns a cell that itself needs to be adjusted.
@@ -232,8 +232,7 @@ class TileMap:
         tile_center = Vec2d(
             int(tile_cell.x + self.tile_size.x_half),
             int(tile_cell.y + self.tile_size.y_half))
-        """
-        what if i just return something different?
+        """ what if i just return something different?
         5. returning tile_cell as pixelxy_to_tilexy viewport_size half - tile_size half
         draws at (224, 176) (0, 2), returns (-1, 0) for player location,
         and draws the player on tile (-1, 0) to the left of the viewport center.
@@ -244,76 +243,86 @@ class TileMap:
         and draws to the right of the viewport center. """
         return tile_center
     
-    # takes a world coordinate and returns the tile at that location.
     def map_tile_at(self, world_coord):
+        """ takes a world coordinate and returns the tile at that location. """
         return self.map_terrain_layer[world_coord.x][world_coord.y]
 
-    # returns the world coords of the player.
-    # does the TileMap class know where the player is? bc player is defined in a separate class.
-    def player_location(self, player): pass
+    def player_location(self, player): 
+        """ returns the world coords of the player.
+        does the TileMap class know where the player is? bc player is defined in a separate class. """
+        pass
 
-    # moves the map based on input provided outside the library,
-    # by adjusting the map's drawing offset converted to isometric.
     def map_move(self, direction):
-        # cell and selected do the conversion.
-        cell = Vec2d(
-            self.map_origin.x // self.tile_size.x, 
-            self.map_origin.y // self.tile_size.y)
-        selected = Vec2d(
-            (cell.y - self.map_origin.y) + (cell.x - self.map_origin.x),
-            (cell.y - self.map_origin.y) - (cell.x - self.map_origin.x))
+        """ initiates an animated movement between tiles.
+        The movement happens over 4 frames, with 1/4 tile movement per frame.
+        Movement only starts if not already animating. """
+        
+        # ignore input if already animating.
+        if self.moving:
+            return
+        
+        # direct pixel's movement to one full tile in isometric space.
+        half_tile_w = self.tile_size.x_half  # 32
+        half_tile_h = self.tile_size.y_half  # 16
+        
+        # where the animation is going to end up.
+        target = Vec2d(0, 0)
+        
+        if direction == "north":  # toward top right
+            target.x = -half_tile_w
+            target.y = half_tile_h
+        elif direction == "south":  # toward bottom left
+            target.x = half_tile_w
+            target.y = -half_tile_h
+        elif direction == "west":  # toward top left
+            target.x = half_tile_w
+            target.y = half_tile_h
+        elif direction == "east":  # toward bottom right
+            target.x = -half_tile_w
+            target.y = -half_tile_h
+        elif direction == "up":  # pure vertical up on screen (combines north + west)
+            target.x = 0
+            target.y = -half_tile_h * 2
+        elif direction == "down":  # pure vertical down on screen (combines south + east)
+            target.x = 0
+            target.y = half_tile_h * 2
+        elif direction == "left":  # pure horizontal left on screen (combines west + south)
+            target.x = -half_tile_w * 2
+            target.y = 0
+        elif direction == "right":  # pure horizontal right on screen (combines east + north)
+            target.x = half_tile_w * 2
+            target.y = 0
+        
+        # set up animation parameters.
+        self.moving = True
+        self.animation_frames_remaining = 4
+        self.animation_target_offset = target
+        self.animation_increment = Vec2d(target.x / 4, target.y / 4)
 
-        """ increment adjusts based on tile size. each tile is half as tall as wide. 
-        therefore, moving up/down needs to adjust y by half as much as x. """
-        increment = Vec2d(self.tile_size.x_half / 2, self.tile_size.y_half / 4)
+    def draw_at_position(self, tile_image, position):
+        """ draws a specific tile at a specific position on the screen. """
+        self.drawing_surf.blit(tile_image, 
+            (position.x, position.y, self.tile_size.x, self.tile_size.y))
 
-        """ movement doesn't work right. the angle it moves along is slightly off.
-        also moving leftward is twice as fast as moving rightward for some reason. 
-        directions opposite of actual expected player movement.
-        will be adjusted when the problems are worked out. """
-        if direction == "north": # toward top right corner of screen
-            selected.x += increment.x
-            selected.y -= increment.y
-        if direction == "south": # toward bottom left
-            selected.x -= increment.x
-            selected.y += increment.y
-        if direction == "west": # toward top left
-            selected.x -= increment.x
-            selected.y -= increment.y
-        if direction == "east": # toward bottom right
-            selected.x += increment.x
-            selected.y += increment.y
-        # following not used yet:
-        if direction == "up": # top
-            selected.y -= increment.y
-        if direction == "down": # bottom
-            selected.y += increment.y
-        if direction == "left": # left side
-            selected.x -= increment.x
-        if direction == "right": # right side
-            selected.x += increment.x
-
-        self.map_offset.x += selected.x
-        self.map_offset.y += selected.y
-
-    # draws a specific tile at a specific position on the screen.
-    # tile_image: Tile.image
-    def draw_at(self, tile_image, position):
-        self.drawing_surf.blit(tile_image, (position.x, position.y, self.tile_size.x, self.tile_size.y))
-
-    # draws a specific tile at a specific world coordinate.
-    def draw_at_loc(self, tile_image, location):
+    def draw_at_location(self, tile_image, location):
+        """ draws a specific tile at a specific world coordinate.
+        that new tile that's spawned needs its world_coordinate set explicitly. """
         loc = self.to_isometric_grid(location)
         tile = Tile(tile_image, loc.x, loc.y, True)
         tile.world_coordinate.x = location.x
         tile.world_coordinate.y = location.y
         self.map_terrain_layer[location.x][location.y] = tile
         self.drawing_surf.blit(tile.image, (
-            tile.x + self.map_offset.x, tile.y + self.map_offset.y, 
+            tile.x + self.map_offset.x, 
+            tile.y + self.map_offset.y, 
             self.tile_size.x, self.tile_size.y))
 
-    # draw the entire level.
-    def draw(self):
+    def draw(self, offset = Vec2d(0, 0)):
+        """ draws the entire level based on player position.
+        offset parameter adjusts to where that is. """
+        if offset.x != 0 and offset.y != 0:
+            self.map_offset.x = offset.x
+            self.map_offset.y = offset.y
         for y in range(self.map_size.y):
             for x in range(self.map_size.x):
                 self.drawing_surf.blit(
@@ -351,9 +360,9 @@ class TileMap:
                     for x in range(len(data[y])):
                         loc = Vec2d(x, y)
                         cell = self.to_isometric_grid(loc)
-                        # draw different tiles here with multiple if statements
+                        # draw different tiles here with multiple if statements.
                         if data[y][x] == "0":
-                            # affixes x and y values in the tiles of the game map
+                            # affixes x and y values in the tiles of the game map.
                             tiles.append(Tile(self.terrain_sprites["default"], cell.x, cell.y, True))
                         else: # default to empty tile
                             tiles.append(Tile(self.terrain_sprites["empty"], cell.x, cell.y, False))
@@ -366,13 +375,14 @@ class TileMap:
                 def list_to_2d(data, columns):
                     if len(data) % columns != 0:
                         print("Error: The total number of elements must be divisible by the number of columns.")
-                        return None # raises NoneType error if not divisible
+                        return None # raises NoneType error if not divisible.
                     return [data[i : i + columns] for i in range(0, len(data), columns)]
                 
                 def transpose(matrix):
                     return [list(row) for row in zip(*matrix)]
 
-                self.map_terrain_layer = transpose(list_to_2d(tiles, len(data[0])))
+                tiles = list_to_2d(tiles, len(data[0]))
+                self.map_terrain_layer = transpose(tiles)
                 self.map_size.x = len(data[0])
                 self.map_size.y = len(data)
             
@@ -402,8 +412,18 @@ class TileMap:
                 print(f"Tile at [{x}, {y}] has world coords [{int(tile.world_coordinate.x)}, {int(tile.world_coordinate.y)}] and pixel position [{tile.x}, {tile.y}]")
 
     def update(self):
-        """ for updating all map layers at once. """
-        pass
+        """ for updating all map layers at once. 
+        Handles animation of map movement over multiple frames. """
+        if self.moving and self.animation_frames_remaining > 0:
+            # apply the increment for this frame.
+            self.map_offset.x += self.animation_increment.x
+            self.map_offset.y += self.animation_increment.y
+            
+            self.animation_frames_remaining -= 1
+            
+            # stop animation when complete.
+            if self.animation_frames_remaining == 0:
+                self.moving = False
 
 #endregion
 
