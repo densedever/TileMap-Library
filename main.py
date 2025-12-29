@@ -4,12 +4,14 @@ Test for my TileMap library.
 Source for initial map idea: https://www.youtube.com/watch?v=wbabAxuYGFU
 
 TODO: 
+- moving the map doesn't update the world coordinate under the center tile as seen in the 
+debug text on the screen.
 - function for picking the tile at center of viewport for player position is bugged,
 even though the function it uses that picks tiles under arbitrary pixel coords works fine.
 the function draws over the correct square, but the world coordinate for its location is
 one off.
-- something is weird with the map movement. its angle is off, so the movement doesn't exactly
-align with the tiles.
+- once these issues are fixed, work on moving the player to a specific tile using a 
+pathfinding algorithm.
 """
 
 import pygame
@@ -45,11 +47,13 @@ HUD["width"] = screen_size.x
 # arguments: drawing surface | viewport size | fixed or dynamic map | level file
 # last argument is optional - defaults to "levels/lvl.txt" if fixed is False.
 starting_area = tilemap.TileMap(screen, viewport_size, True, "levels\\lvl.txt")
+
+player = tilemap.Tile(starting_area.terrain_sprites["filled"], 288, 144, False)
 #endregion
 
 #region main loop and helper constants
 clicking = False
-LEFT_MB   = 1
+LEFT_MB  = 1
 # MID_MB = 2, RIGHT_MB = 3, SCROLL_DN = 4, SCROLL_UP = 5
 
 running = True
@@ -58,6 +62,7 @@ while running:
     screen.fill(white)
     timer.tick(FPS)
     
+    # placed in my own data type because getting x and y with 0 and 1 is weird :/
     mouse = tilemap.Vec2d(pygame.mouse.get_pos()[0], pygame.mouse.get_pos()[1])
 
     starting_area.update()
@@ -70,12 +75,13 @@ while running:
     # debug: display a highlighted tile where the mouse is.
     world_coords_at_mouse = starting_area.pixelxy_to_world_coord(mouse) # world coord of tile
     tilexy_under_mouse = starting_area.pixelxy_to_tilexy(mouse) # pixel coord of tile
-    starting_area.draw_at(starting_area.terrain_sprites["filled"], tilexy_under_mouse)
+    starting_area.draw_at_position(starting_area.terrain_sprites["filled"], tilexy_under_mouse)
     
     # debug: display a highlighted tile where the viewport center is.
     # viewport is 10 tiles wide by 11 tiles tall, so the center is up 1 tile
     # from the center, or 10 tiles diagonal from each corner meeting in the middle.
-    starting_area.draw_at(starting_area.terrain_sprites["filled"], starting_area.map_center_tile())
+    starting_area.draw_at_position(starting_area.terrain_sprites["filled"], starting_area.map_center_tile())
+    starting_area.draw_at_position(starting_area.terrain_sprites["filled"], tilemap.Vec2d(288, 144))
     
     # debug: (red dot) center of viewport
     pygame.draw.rect(screen, "red", (viewport_size.x_half, viewport_size.y_half, 10, 10))
@@ -122,12 +128,37 @@ while running:
 
     # draw HUD on top of everything else
     pygame.draw.rect(screen, "black", (HUD["x"], HUD["y"], HUD["width"], HUD["height"]), 1)
-    
     #endregion
 
     #region input handling
     if clicking:
-        # test map movement with the mouse.
+        # need to update world coordinate of player when movement ends.
+        mouse_above_center = (
+            mouse.x > viewport_size.x_half - starting_area.tile_size.x / 2 and
+            mouse.x < viewport_size.x_half + starting_area.tile_size.x / 2 and
+            mouse.y < viewport_size.y_half - starting_area.tile_size.y / 2)
+        mouse_below_center = (
+            mouse.x > viewport_size.x_half - starting_area.tile_size.x / 2 and
+            mouse.x < viewport_size.x_half + starting_area.tile_size.x / 2 and
+            mouse.y > viewport_size.y_half + starting_area.tile_size.y / 2)
+        mouse_left_of_center = (
+            mouse.x < viewport_size.x_half - starting_area.tile_size.x / 2 and
+            mouse.y > viewport_size.y_half - starting_area.tile_size.y / 2 and
+            mouse.y < viewport_size.y_half + starting_area.tile_size.y / 2)
+        mouse_right_of_center = (
+            mouse.x > viewport_size.x_half + starting_area.tile_size.x / 2 and
+            mouse.y > viewport_size.y_half - starting_area.tile_size.y / 2 and
+            mouse.y < viewport_size.y_half + starting_area.tile_size.y / 2)
+
+        if (mouse_above_center):
+            starting_area.map_move("down")
+        if (mouse_below_center):
+            starting_area.map_move("up")
+        if (mouse_left_of_center):
+            starting_area.map_move("right")
+        if (mouse_right_of_center):
+            starting_area.map_move("left")
+        
         if mouse.x < viewport_size.x_half and mouse.y < viewport_size.y_half:
             starting_area.map_move("west")
         if mouse.x > viewport_size.x_half and mouse.y < viewport_size.y_half:
