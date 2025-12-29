@@ -1,15 +1,15 @@
-"""
-Test for my TileMap library.
+""" Test for my TileMap library.
 
 Source for initial map idea: https://www.youtube.com/watch?v=wbabAxuYGFU
 
 TODO: 
 - moving the map doesn't update the world coordinate under the center tile as seen in the 
 debug text on the screen.
-- function for picking the tile at center of viewport for player position is bugged,
-even though the function it uses that picks tiles under arbitrary pixel coords works fine.
-the function draws over the correct square, but the world coordinate for its location is
-one off.
+- function for picking the tile at center of viewport for player position draws over 
+the correct square, but the world coordinate for its location is one off.
+- still need to detect world boundaries when moving the player around.
+when a boundary is hit, stop moving in that direction and stop drawing the mouse tile,
+keeping the selection at the location of the last valid tile.
 - once these issues are fixed, work on moving the player to a specific tile using a 
 pathfinding algorithm.
 """
@@ -23,7 +23,8 @@ import tilemap
 pygame.init()
 pygame.font.init()
 
-HUD_height    = 129 # number acquired from counting pixels in the actual game
+HUD_height    = 129 # number acquired from counting pixels in the actual game.
+# using Diablo 1's resolution of 640x480 and HUD size of 640x129 for testing.
 screen_size   = tilemap.Vec2d(640, 480)
 viewport_size = tilemap.Vec2d(640, 480-HUD_height)
 
@@ -41,11 +42,11 @@ FPS = 25
 HUD = {}
 HUD["x"] = 0
 HUD["height"] = HUD_height
-HUD["y"] = screen_size.y - HUD_height
+HUD["y"] = screen_size.y - HUD["height"]
 HUD["width"] = screen_size.x
 
 # arguments: drawing surface | viewport size | fixed or dynamic map | level file
-# last argument is optional - defaults to "levels/lvl.txt" if fixed is False.
+# last argument is optional - defaults to "levels\\lvl.txt" if fixed is False.
 starting_area = tilemap.TileMap(screen, viewport_size, True, "levels\\lvl.txt")
 
 player = tilemap.Tile(starting_area.terrain_sprites["filled"], 288, 144, False)
@@ -53,8 +54,7 @@ player = tilemap.Tile(starting_area.terrain_sprites["filled"], 288, 144, False)
 
 #region main loop and helper constants
 clicking = False
-LEFT_MB  = 1
-# MID_MB = 2, RIGHT_MB = 3, SCROLL_DN = 4, SCROLL_UP = 5
+LEFT_MB  = 1 # MID_MB = 2, RIGHT_MB = 3, SCROLL_DN = 4, SCROLL_UP = 5
 
 running = True
 while running:
@@ -73,36 +73,19 @@ while running:
     starting_area.draw()
     
     # debug: display a highlighted tile where the mouse is.
-    world_coords_at_mouse = starting_area.pixelxy_to_world_coord(mouse) # world coord of tile
-    tilexy_under_mouse = starting_area.pixelxy_to_tilexy(mouse) # pixel coord of tile
+    world_coords_at_mouse = starting_area.pixelxy_to_world_coord(mouse) # world coord of tile.
+    tilexy_under_mouse = starting_area.pixelxy_to_tilexy(mouse) # pixel coord of tile.
     starting_area.draw_at_position(starting_area.terrain_sprites["filled"], tilexy_under_mouse)
     
     # debug: display a highlighted tile where the viewport center is.
     # viewport is 10 tiles wide by 11 tiles tall, so the center is up 1 tile
     # from the center, or 10 tiles diagonal from each corner meeting in the middle.
     starting_area.draw_at_position(starting_area.terrain_sprites["filled"], starting_area.map_center_tile())
-    starting_area.draw_at_position(starting_area.terrain_sprites["filled"], tilemap.Vec2d(288, 144))
     
     # debug: (red dot) center of viewport
     pygame.draw.rect(screen, "red", (viewport_size.x_half, viewport_size.y_half, 10, 10))
     
-    # debug: (green rect) tile xy (top-left corner) of drawing rect.
-    # "tile xy" and "drawing focus" in this codebase refers to the top-left corner of the drawing rect.
-    pygame.draw.rect(screen, "green", (
-        starting_area.map_center_tile().x, 
-        starting_area.map_center_tile().y, 
-        starting_area.tile_size.x, starting_area.tile_size.y), 2)
-    
-    """ the following doesn't print correct value.
-    player position is (-1, 0) when it should be (0, 0) at start.
-    this is because the corner of a tile and the center of the previous tile are the same.
-    how to fix? maybe subtract one pixel from the x and y of the pixelxy_to_tilexy function? """
-    
     # debug: (blue rect) player drawing rect.
-    """ is world_coord_to_pixelxy working correctly? yes
-    world_coord_to_pixelxy returns the top-left corner of the tile at those world coords.
-    but player_location is (-1, 0) instead of (0, 0) at start, bc location is based on top-left corner of tile.
-    "location" in this codebase refers to a world coordinate. "position" refers to pixel x and y."""
     pygame.draw.rect(screen, "blue", (
         starting_area.map_center_tile().x, 
         starting_area.map_center_tile().y, 
@@ -118,7 +101,7 @@ while running:
     tilexy_under_mouse_surf = font.render(
         f"Selected : {tilexy_under_mouse.x}, {tilexy_under_mouse.y}", True, black)
     player_location_surf = font.render(
-        f"Player Loc : {starting_area.pixelxy_to_world_coord(starting_area.map_center_tile()).x}, {starting_area.pixelxy_to_world_coord(starting_area.map_center_tile()).y}", True, black)
+        f"Player Loc : {starting_area.map_player_location.x}, {starting_area.map_player_location.y}", True, black)
 
     screen.blit(mouse_cursor_text_surf, (12, 12))
     screen.blit(cell_text_surf, (12, 36))
