@@ -1,5 +1,4 @@
-"""
-Class for drawing Tile maps for 2D isometric RPG games.
+""" Class for drawing Tile maps for 2D isometric RPG games.
 
 Helpful urls while making:
 https://clintbellanger.net/articles/isometric_math/
@@ -7,12 +6,10 @@ http://www-cs-students.stanford.edu/~amitp/gameprog.html#tiles
 https://pikuma.com/blog/isometric-projection-in-games
 https://web.archive.org/web/20190818212535/http://trac.bookofhook.com/bookofhook/trac.cgi/wiki/OverviewOfIsometricEngineDevelopment
 
-TODO: . = undone, v = done but needs testing
-. save selected tile location if mouse goes outside world bounds
-v make a generalized way to select arbitrary tile
-v make the center of the viewport
-. make the player character tile
-. center it on the viewport
+TODO:
+- detect world boundaries when moving the player around and on mouse hover;
+- stop moving in that direction and stop drawing the mouse tile,
+  keeping the selection at the location of the last valid tile.
 """
 
 import pygame
@@ -27,7 +24,9 @@ class Vec2d():
         self.y = y
         self.x_half = self.x / 2
         self.y_half = self.y / 2
-        self.value = f"{self.x}, {self.y}" # for debugging
+        self.value = f"{self.x}, {self.y}" # debug
+    def add(self, other):
+        return Vec2d(self.x + other.x, self.y + other.y)
 
 # for the tiles that make up the map. still need to figure out what properties go where.
 class Tile:
@@ -115,17 +114,6 @@ class TileMap:
         return Vec2d(
             int((self.map_origin.x * self.tile_size.x) + (cell.x - cell.y) * (self.tile_size.x_half)),
             int((self.map_origin.y * self.tile_size.y) + (cell.x + cell.y) * (self.tile_size.y_half)))
-
-    def tile_center(self, position):
-        """ returns the pixel coordinates of the center of the tile at position. 
-        tile centers are weird in this codebase because the center of one tile
-        is the corner of another tile. so if you're drawing or selecting tiles, which one 
-        are you drawing? the tile underneath that position, or the tile whose corner is at 
-        that position? idk how to fix this yet. """
-        tile = self.pixelxy_to_tilexy(position)
-        return Vec2d(
-            tile.x + self.tile_size.x_half,
-            tile.y + self.tile_size.y_half)
 
     def pixelxy_to_world_coord(self, position):
         """ takes a set of screen coordinates and returns the world coordinate of the tile there.
@@ -240,9 +228,11 @@ class TileMap:
             self.viewport_size.x_half - self.tile_size.x_half, 
             self.viewport_size.y_half - self.tile_size.y_half))
         
+        # and here's the adjustment.
         tile_center = Vec2d(
             int(tile_cell.x + self.tile_size.x_half),
             int(tile_cell.y + self.tile_size.y_half))
+        
         return tile_center
     
     def map_tile_at(self, world_coord):
@@ -288,7 +278,13 @@ class TileMap:
         elif direction == "right":  # pure horizontal right on screen (combines east + north)
             target.x = half_tile_w * 2
             target.y = 0
-        
+
+        """ stop movement if it would go out of bounds (not implemented yet).
+        player_position = self.world_coord_to_pixelxy(self.map_player_location)
+        if not self.inside_world_bounds(player_position.add(target)):
+            target.x = 0
+            target.y = 0 """
+
         # set up animation parameters.
         self.moving = True
         self.animation_frames_remaining = 4
@@ -302,7 +298,7 @@ class TileMap:
 
     def draw_at_location(self, tile_image, location):
         """ draws a specific tile at a specific world coordinate.
-        that new tile that's spawned needs its world_coordinate set explicitly. """
+        that new tile needs its world_coordinate set explicitly. """
         loc = self.to_isometric_grid(location)
         tile = Tile(tile_image, loc.x, loc.y, True)
         tile.world_coordinate.x = location.x
@@ -322,7 +318,7 @@ class TileMap:
         for y in range(self.map_size.y):
             for x in range(self.map_size.x):
                 self.drawing_surf.blit(
-                    self.terrain_sprites["default"], (
+                    self.map_terrain_layer[x][y].image, (
                         self.map_terrain_layer[x][y].x + self.map_offset.x, 
                         self.map_terrain_layer[x][y].y + self.map_offset.y, 
                         x * self.tile_size.x, y * self.tile_size.y))
@@ -422,7 +418,7 @@ class TileMap:
             # stop animation when complete and update player location.
             if self.animation_frames_remaining == 0:
                 self.moving = False
-                # Update player's world coordinate based on center of viewport
+                # update player's world coordinate based on center of viewport.
                 center_position = Vec2d(
                     int(self.viewport_size.x_half),
                     int(self.viewport_size.y_half))
